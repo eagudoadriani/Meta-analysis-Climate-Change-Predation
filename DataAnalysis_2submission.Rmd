@@ -1,0 +1,764 @@
+---
+title: "2Submission_Metanalysis"
+author: "Esteban Agudo"
+date: "2023-05-18"
+output: html_document
+---
+
+
+```{r, message=FALSE, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(metafor)
+library(stringr)
+library(cowplot)
+library(gridExtra)
+library(lemon)
+library(lme4)
+library(metaviz)
+library(lemon)
+library("rnaturalearth")
+library("rnaturalearthdata")
+library("sf")
+library("ggspatial")
+library(sjPlot)
+library(reactable)
+library(ggpubr)
+library(extrafont)
+library(scales)
+library(fishualize)
+library(xlsx)
+library(ggpubr)
+library("rnaturalearth")
+library("rnaturalearthdata")
+library("sf")
+library("ggspatial")
+
+
+#loadfonts(device="win") 
+colour.palette <- c("#332288", "red3", "#E69F00", "#117733", "#56B4E9","#E69F00",  "#CC79A7", "#D55E00", "#0072B2", "#F0E442", "#CC6677")
+```
+
+```{r}
+data<-read.csv(file="data.csv", header=TRUE)
+str(data)
+```
+
+#Exploratory values
+Number of experiments per treatment and ecological interaction
+```{r}
+#Number experiments
+data %>% tally
+
+#Number of studies
+data %>% distinct(Title)%>% tally
+
+#Number experiments per treatment
+data %>% 
+  group_by(Treatment)%>%tally
+
+#Number studies per treatment
+data %>% 
+  group_by(Treatment)%>%distinct(Title)%>%tally
+
+#Number experiments per taxonomic group
+data %>% 
+  group_by(Tax_Group_specific)%>%distinct(Title)%>%
+tally
+
+
+data %>% 
+  group_by(Tax_Group)%>%tally
+
+
+#Number studies per treatment and tax group
+ts<-data %>% 
+  group_by(Treatment, Tax_Group)%>%distinct(Title)%>%tally
+
+te<-data %>% 
+  group_by(Treatment, Tax_Group)%>%tally
+
+cbind(ts, te$n)
+
+#Number of studies and experimetns in the tropics and temperate
+data %>% 
+  group_by(Weather)%>%distinct(Title)%>%tally
+
+data %>% 
+  group_by(Weather)%>%tally
+
+#Number of studies and experiments per habitat
+data %>% 
+  group_by(Habitat)%>%distinct(Title)%>%tally
+
+data %>% 
+  group_by(Habitat)%>%tally
+
+#Number of studies and experiments considering taxonomic group and interaction
+data %>% 
+  group_by(Treatment, Interaction)%>%distinct(Title)%>%tally
+
+data %>% 
+  group_by(Treatment, Interaction)%>%tally
+
+#Number of studies and experiments considering stressor, and taxonomic group specific
+study<-data %>% 
+  group_by(Treatment, Tax_Group_specific)%>%distinct(Title)%>%tally %>% print(n=27)
+
+exp<-data %>% 
+  group_by(Treatment, Tax_Group_specific)%>%tally %>% print(n=27)
+
+cbind(study, exp$n) #Studies and experiments considering taxonomic group and stressor
+
+
+significance <-data %>%
+  select(Treatment, Significance) %>%
+  group_by(Treatment, Significance) %>%
+  tally()
+
+significance
+
+data_effect<-data %>%
+  filter(Significance=="Significant")%>%
+  select(Treatment, #Tax_Group, Significance, 
+         Type_Effect) %>%
+  group_by(Treatment, #Tax_Group, Significance, 
+           Type_Effect)%>%
+tally()
+
+# 54, 79, 21
+
+data_effect
+
+data_tax<-data%>%
+  filter(Significance=="Significant")%>%
+  select(Treatment, Tax_Group, Type_Effect) %>%
+  group_by(Treatment, Tax_Group, Type_Effect)%>%
+tally()
+
+data_tax
+```
+
+Transform into factors
+```{r}
+data$Tax_Group<-factor(data$Tax_Group)
+data$Tax_Group_specific<-factor(data$Tax_Group_specific)
+data$Treatment<-factor(data$Treatment)
+data$Interaction<-factor(data$Interaction)
+data$Habitat<-factor(data$Habitat)
+
+#Ordering some data
+data$Significance<-factor(data$Significance, levels=c("Significant", "Non significant", "Not tested"))
+
+
+```
+
+# Rol of Temperature and acidification on feeding rates
+Lets start by normalizing
+```{r, message=FALSE, warning=FALSE}
+data<-escalc("ROM", m2i = Control_Mean       #log transformed ratio of mean
+ , sd2i = Control_SD
+ , n2i =Control_n
+ , m1i= Treatment_Mean
+, sd1i = Treatment_SD
+, n1i = Treatment_n
+,  data = data, digits = 8)
+```
+
+# Histogram of effects
+```{r}
+head(data)
+hist(data$yi)
+
+data<-data %>%
+  mutate(Percentage_Effect=(100*(exp(yi)-1)))
+  
+
+Effects_Decrease_FR<-data %>%
+  filter(Significance=="Significant")%>%
+  dplyr::group_by(Treatment) %>%
+  filter(Percentage_Effect<0) %>%
+  summarise(Mean_effect=mean(Percentage_Effect, na.rm=TRUE), 
+            Minimun_decrease=min(abs(Percentage_Effect), na.rm=TRUE),
+            Maximun_decrease=max(abs(Percentage_Effect), na.rm=TRUE))
+            
+
+Effects_Increase_FR<-data %>%
+  filter(Significance=="Significant")%>%
+  dplyr::group_by(Treatment) %>%
+  filter(Percentage_Effect>0) %>%
+  summarise(Mean_effect=mean(Percentage_Effect, na.rm=TRUE), 
+            Minimun_Increase=min(abs(Percentage_Effect), na.rm=TRUE),
+            Maximun_Increase=max(abs(Percentage_Effect), na.rm=TRUE))
+
+    
+  Effect_general<-data %>%
+      filter(Significance=Significant)%>%
+      dplyr::group_by(Treatment)%>%
+      summarise(mean=mean(Percentage_Effect, na.rm=TRUE),
+                max=max(Percentage_Effect, na.rm=TRUE), 
+                min=min(Percentage_Effect, na.rm=TRUE)) 
+
+
+data_histogram<-data %>%
+  filter(Significance=="Significant") 
+
+
+data_histogram_table<-data %>%
+  filter(Significance=="Significant")%>% 
+  select(Treatment, Percentage_Effect) %>%
+  group_by(Treatment) %>%
+  summarize(min=min(abs(Percentage_Effect)), mean=abs((Percentage_Effect)), max=max(abs(Percentage_Effect)), sd=sd(abs(Percentage_Effect)))
+
+
+data_warm_hist<-data_histogram %>%
+  filter(Treatment=="Warming")
+
+data_acid_hist<-data_histogram %>%
+  filter(Treatment=="Acidification")
+
+data_acid_warm_hist<-data_histogram %>%
+  filter(Treatment=="Warming+Acidification")
+
+histogram_multistressor<-ggplot(data, aes(x=sign(Percentage_Effect)*(abs(Percentage_Effect))^(1/3)), color=Significance) +    geom_histogram(data=data, aes(fill=Significance))+
+  theme_bw()+xlab("Effect size (cubic root of the % change in feeding rates)")+ylab("Number of experiment")+
+    geom_vline(xintercept=0, linetype="dashed")+
+  theme(axis.title = element_text(size = 7), axis.text=element_text(size=6),  panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    geom_vline(xintercept=0, linetype="dashed")+
+  scale_y_continuous(breaks=seq(0, 22, 2), limits = c(0, 22), expand=c(0, 0))+
+  scale_x_continuous(breaks=seq(-6, 14, 2), limits = c(-6, 14), expand=c(0, 0))+
+  theme(legend.position = c(.75, .60),
+    legend.direction = "vertical",
+    legend.justification = c("left", "bottom"),
+    legend.box.just = "left",
+    legend.margin = margin(1, 1, 1, 1),
+    legend.spacing.y = unit(0.05, "cm"),
+      legend.text = element_text(size = 8.5, family = "Arial"),
+  legend.title=element_text(size=8.5, family = "Arial"),
+   legend.key.size = unit(0.4, "cm"),
+      legend.key.height = unit(0.4, "cm"))+
+   scale_fill_manual(values=colour.palette)+
+  labs(fill=NULL)
+  
+histogram_multistressor
+#hist_percentage<-
+
+#cubic root of percentage effect #can't used sqrt or log because I have negative values 
+
+#cubic root of warming effect
+hist_warming<-ggplot(data_warm_hist, aes(x=sign(Percentage_Effect)*(abs(Percentage_Effect))^(1/3))) +  #can't used sqrt or log because I have negative values 
+  geom_histogram(color="black", fill="black")+
+  theme_bw()+xlab("Effect size")+
+  ylab("Experiments")+ 
+  theme(axis.title = element_text(size = 7), axis.text=element_text(size=6), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    geom_vline(xintercept=0, linetype="dashed")+
+    scale_x_continuous(breaks=seq(-10, 19, 2), limits=c(-10, 19))+
+    scale_y_continuous(breaks=seq(0, 11.5, 1), limits = c(0, 11.5), expand=c(0, 0))
+
+hist_warming
+
+#cubic root of acidification effect
+hist_acid<-ggplot(data_acid_hist, aes(x=sign(Percentage_Effect)*(abs(Percentage_Effect))^(1/3))) +  geom_histogram(color="black", fill="black")+
+  theme_bw()+xlab("Effect size")+
+  ylab("Experiments")+
+   theme(axis.title = element_text(size = 7), axis.text=element_text(size=6),  panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    geom_vline(xintercept=0, linetype="dashed") +
+  scale_x_continuous(breaks=seq(-10, 19, 2), limits=c(-10, 19))+
+   # scale_x_continuous(breaks=seq(-10, 20, 2))+
+    scale_y_continuous(breaks=seq(0, 11.5, 1), limits = c(0, 11.5), expand=c(0, 0))
+
+hist_acid
+
+#sqrt of percentage effect with warming + acidification  
+hist_acid_warm<-ggplot(data_acid_warm_hist, aes(x=sign(Percentage_Effect)*sqrt(abs(Percentage_Effect)))) +  #can't used sqrt or log because I have negative values 
+  geom_histogram(color="black", fill="black")+
+  theme_bw()+xlab("Effect size")+
+  ylab("Experiments")+
+   theme(axis.title = element_text(size = 7), axis.text=element_text(size=6), panel.grid.major = element_blank(), panel.grid.minor = element_blank())+
+    geom_vline(xintercept=0, linetype="dashed")+
+   scale_x_continuous(breaks=seq(-10, 19, 2), limits=c(-10, 19))+
+    scale_y_continuous(breaks=seq(0, 11.5, 1), limits = c(0, 11.5), expand=c(0, 0))
+
+hist_acid_warm
+
+#Compared with sqrt data including non significant results of both warming and acidificaiton
+ggplot(data, aes(x=sign(Percentage_Effect)*sqrt(abs(Percentage_Effect))))+
+  geom_histogram(color="black", fill="black")+
+  theme_bw()+xlab("sqrt of % effect")+ylab("Number of experiments")+
+    geom_vline(xintercept=0, linetype="dashed")
+
+
+#hist_RatioEffect<-
+# logRR of both warming and acidification 
+ggplot(data, aes(x=yi)) + 
+  geom_histogram(color="black", fill="black")+
+  theme_bw()+xlab("Effect (lnRR)")+ylab("Number of experiments")+
+  geom_vline(xintercept=0, linetype="dashed")+
+  stat_function(fun = dnorm, args = list(mean = mean(data$Percentage_Effect), sd = sd(data$Percentage_Effect)))
+
+#hist_RatioEffect
+```
+
+```{r}
+hist_comb <- ggarrange(hist_acid, hist_warming, hist_acid_warm
+,                  labels = c("A", "B", "C"),
+                    ncol = 2, nrow = 2)
+
+hist_comb
+
+
+hist_comb_multistressor <- ggarrange(histogram_multistressor, 
+                  ggarrange(hist_acid, hist_warming, hist_acid_warm, ncol=3, labels=c("B", "C", "D")),
+                  labels = c("A"),
+                    nrow = 2)
+
+hist_comb_multistressor
+
+```
+
+Figure 2: Histogram of experiments that found significant effects
+```{r}
+png("Figures/Fig2_HistogramEffects.png", width=15, height=14, units="cm", res=300)
+print(hist_comb)
+dev.off()
+
+
+png("Figures/Fig2_HistogramMultistressor.png", width=15, height=14, units="cm", res=300)
+print(histogram_multistressor)
+dev.off()
+
+
+png("Figures/Fig2_HistogramCombineMultistressor.png", width=15, height=14, units="cm", res=300)
+print(hist_comb_multistressor)
+dev.off()
+
+
+
+```
+
+
+```{r}
+write.xlsx(data, file = "data_effects.xlsx",
+   sheetName = "data_new", append = TRUE)
+```
+
+## Metaregressions 
+
+```{r, message=FALSE, warning=FALSE}
+#model considering only treatment
+model1<- rma.mv(yi,vi, mods =~Treatment-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+summary(model1)
+  
+#model considering treatment and interaction
+model2<- rma.mv(yi,vi, mods =~Treatment:Interaction-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+ summary(model2)
+  
+#model considering treatment, interaction, taxonomic group
+model3<- rma.mv(yi,vi, mods =~Treatment:Interaction:Tax_Group-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+summary(model3)  
+
+#model considering treatment, Weather
+model4<- rma.mv(yi,vi, mods =~Treatment*Weather-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+summary(model4)
+
+
+#model considering stressor and taxonomic group. For this I am filtering groups that have fewer than 4 and a single study on kelps with two experiments 
+levels(data$Treatment)
+
+#data<-data %>%
+# filter(!(Treatment=='Acidification' & Tax_Group_specific=='Amphipods')) %>%
+  #filter(!(Treatment=='Warming+Acidification' & Tax_Group_specific=='Amphipods')) %>%
+  #filter(!(Treatment=='Warming+Acidification' & Tax_Group_specific=='Sea urchins')) %>%
+ # filter(!(Treatment=='Warming+Acidification' & Tax_Group_specific=='Crabs')) %>%
+  #filter(Temp_variation<11)
+  #filter(!(Habitat=="Kelp forest"))%>%
+  #filter(!ExpTreatment=="Prey")
+  #filter(ExpTreatment=="Both")
+ #filter(yi>-3) %>%
+ #filter(yi<1.5)
+  
+# We did several filter to eliminate the studies which have a larger effect and prove this were not determine the significance of results by their own. 
+           
+#model 7-> Comparing general taxonomic group
+model7<- rma.mv(yi,vi, mods =~Treatment:Tax_Group-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+summary(model7)
+
+model5<- rma.mv(yi,vi, mods =~Treatment:Tax_Group-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+summary(model5)  
+
+#model considering stressor and specific taxonomic group
+model6<- rma.mv(yi,vi, mods =~Treatment:Tax_Group_specific-1, random=~1|Title,  method = "REML", knha=TRUE, data = data)
+summary(model6)  
+
+#Comparing models 
+AIC(model1, model2, model3, model4, model5, model6)
+
+#Number of studies and experiments considered for metanalysis with taxonomic group
+exp<-data %>%
+  group_by(Treatment, Tax_Group_specific)%>%
+  tally
+
+study<-data%>% 
+  group_by(Treatment, Tax_Group_specific)%>%
+  distinct(Title) %>%tally
+cbind(study, exp$n)
+
+#Number studies and experiments considering general taxonomic group
+exp<-data %>%
+  group_by(Treatment, Tax_Group)%>%
+  tally
+
+study<-data%>% 
+  group_by(Treatment, Tax_Group)%>%
+  distinct(Title) %>%tally
+cbind(study, exp$n)
+```
+
+## Effect of type of stressors on predation rates
+```{r}
+# Model considering only the stressor type model1
+comp<-coef(summary(model1)) #get coeficients from model
+
+comp<-setNames(cbind(rownames(comp), comp, row.names = NULL), 
+         c("COL1", "estimate", "se", "zval", "pval", "ci.lb", "ci.ub")) # set colnames
+
+new_variables_comp<- gsub("Treatment","",comp$COL1)%>% str_split(":", simplify = TRUE)%>% as.data.frame() %>% cbind(comp) #Separate factors
+
+new_variables_comp_2<- new_variables_comp %>%
+  select(V1, estimate, se, zval, pval, ci.lb, ci.ub) %>%
+  group_by(V1) #group by factors 
+
+new_variables_comp_2<-as.data.frame(new_variables_comp_2) #make dataframe
+```
+
+Creating workbook with data from model measuring effect of stressors
+```{r}
+write.xlsx(new_variables_comp_2, file = "Models.xlsx",
+    sheetName = "Model_Stressors", append = TRUE)
+```
+
+Similarly lets plot
+```{r, message=FALSE, warning=FALSE}
+P1<-ggplot()+
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=0.7))+
+    labs(x="", y="Effect size on feeding rates(logRR)")+
+  geom_hline(yintercept=0, linetype="dashed", 
+                  color = "red", size=0.5)+
+       geom_jitter(data=data, aes(x=Treatment, y=yi, color=Treatment, shape=Significance, group=Treatment), alpha = 0.2, position = position_jitterdodge(dodge.width=.5, jitter.width =0.9))+
+  scale_shape_manual(values=c(16, 21, 10))+
+  geom_point(data=new_variables_comp_2, aes(x=V1, y=estimate, color=V1), shape=17, size=2.5, position=position_dodge(width=.5))+
+  geom_errorbar(data=new_variables_comp_2, aes(x=V1, color=V1, ymin=ci.ub, ymax=ci.lb), width=0.02, position=position_dodge(.5))+
+  scale_fill_manual(values=colour.palette)+
+  scale_color_manual(values=colour.palette)+
+  scale_y_continuous(breaks = seq(-4,4, 1),limits = c(-4.5,4.2))+
+  theme(legend.position = "none")+
+  geom_vline(xintercept=c(1.5,2.5), linetype="dashed", size=0.4, color="gray")+guides(shape="none")
+
+P1
+```
+Figure 2: Effect of stressor on predation rates
+```{r}
+png("Figures/Fig2_stressor.png", width=10, height=12, units="cm", res=300)
+print(P1)
+dev.off()
+```
+
+## Effect of stressor on predation rates by specific taxonomic group
+```{r, message=FALSE, warning=FALSE}
+comp<-coef(summary(model6)) #get coeficients from model
+
+comp<-setNames(cbind(rownames(comp), comp, row.names = NULL), 
+         c("COL1", "estimate", "se", "zval", "pval", "ci.lb", "ci.ub")) # set colnames
+
+new_variables_comp<- gsub("Treatment|Tax_Group_specific","",comp$COL1)%>% str_split(":", simplify = TRUE)%>% as.data.frame() %>% cbind(comp) #Separate factors
+
+new_variables_comp_2<- new_variables_comp %>%
+  select(V1, V2, estimate, se, zval, pval, ci.lb, ci.ub) %>%
+  group_by(V1) #group by factors 
+
+new_variables_comp_2<-as.data.frame(new_variables_comp_2) #make dataframe
+```
+
+Creating workbook with data from model considering stressor and taxonomic group specific
+```{r}
+write.xlsx(new_variables_comp_2, file = "Models.xlsx",
+     sheetName = "Model_Stressors_TaxGroupSpec", append = TRUE)
+```
+
+
+```{r, r, message=FALSE, warning=FALSE}
+P2<-ggplot()+
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=0.7))+
+    labs(x="", y="Effect size on feeding rates(logRR)", color = "Consumer")+
+  geom_hline(yintercept=0, linetype="dashed", 
+                  color = "red", size=0.5)+
+       geom_jitter(data=data, aes(x=Tax_Group_specific, y=yi, group=Treatment, color=Treatment, shape=Significance), alpha = 0.2, position = position_jitterdodge(dodge.width=.5, jitter.width =0.5))+
+  scale_shape_manual(values=c(16, 21, 10))+
+  geom_point(data=new_variables_comp_2, aes(x=V2, y=estimate, color=V1), shape=17, size=2.5, position=position_dodge(width=.5))+
+  geom_errorbar(data=new_variables_comp_2, aes(x=V2, color=V1, ymin=ci.ub, ymax=ci.lb), width=0.1, position=position_dodge(.5))+
+  scale_fill_manual(values=colour.palette)+
+  scale_color_manual(values=colour.palette)+
+  scale_y_continuous(breaks = seq(-4,4, 1),limits = c(-4.5,4.2))+
+  theme(legend.position = c(.05, .90),
+    legend.direction = "vertical",
+    legend.box = "horizontal",
+   legend.justification = c(.01, 0.5),
+   legend.box.just = "left",
+   #legend.margin = margin(4, 4, 4, 4),
+  legend.margin =margin(r=40,l=5,t=5,b=5),
+    legend.spacing.y = unit(0.15, "cm"),
+      legend.text = element_text(size = 8.5, family = "Times New Roman"),
+  legend.title=element_blank(),
+   legend.key.size = unit(0.9, "cm"),
+   legend.key.height = unit(0.4, "cm"))+
+  geom_vline(xintercept=c(1.5,2.5,3.5, 4.5, 5.5), linetype="dashed", size=0.4, color="gray")+guides(shape="none")
+
+P2
+```
+
+Figure 3: Effect of stressor on feeding rates by each specific taxonomic group
+```{r}
+png("Figures/Fig3_stressor_TaxGroup.png", width=18, height=12, units="cm", res=300)
+print(P2)
+dev.off()
+```
+
+## Effect of type of stressors on predation rates by general taxonomic group
+```{r}
+# Model considering only the stressor type model1
+comp<-coef(summary(model7)) #get coeficients from model
+
+comp<-setNames(cbind(rownames(comp), comp, row.names = NULL), 
+         c("COL1", "estimate", "se", "zval", "pval", "ci.lb", "ci.ub")) # set colnames
+
+new_variables_comp<- gsub("Treatment|Tax_Group","",comp$COL1)%>% str_split(":", simplify = TRUE)%>% as.data.frame() %>% cbind(comp) #Separate factors
+
+new_variables_comp_2<- new_variables_comp %>%
+  select(V1, V2, estimate, se, zval, pval, ci.lb, ci.ub) %>%
+  group_by(V1) #group by factors 
+
+new_variables_comp_2<-as.data.frame(new_variables_comp_2) #make dataframe
+```
+
+
+Creating workbook with data from model
+```{r}
+#Adding data from model considering only stressor
+write.xlsx(new_variables_comp_2, file = "Models.xlsx",
+   sheetName = "Model_Stressors_TaxGroup", append = TRUE)
+```
+
+Similarly lets plot
+```{r, message=FALSE, warning=FALSE}
+P3<-ggplot()+
+  theme_classic() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=0.7))+
+    labs(x="", y="Effect size on feeding rates(logRR)")+
+  geom_hline(yintercept=0, linetype="dashed", 
+                  color = "red", size=0.5)+
+       geom_jitter(data=data, aes(x=Tax_Group, y=yi, color=Treatment, shape=Significance, group=Treatment), alpha = 0.2, position = position_jitterdodge(dodge.width=.5, jitter.width =0.4))+
+  scale_shape_manual(values=c(16, 21, 10))+
+  geom_point(data=new_variables_comp_2, aes(x=V2, y=estimate, color=V1), shape=17, size=2.5, position=position_dodge(width=.5))+
+  geom_errorbar(data=new_variables_comp_2, aes(x=V2, color=V1, ymin=ci.ub, ymax=ci.lb), width=0.1, position=position_dodge(.5))+
+  scale_fill_manual(values=colour.palette)+
+  scale_color_manual(values=colour.palette)+
+  scale_y_continuous(breaks = seq(-4,4, 1),limits = c(-4.5,4.2))+
+  theme(legend.position = "none")+
+  geom_vline(xintercept=c(1.5,2.5, 3.5), linetype="dashed", size=0.4, color="gray")+guides(shape="none")+ 
+  theme(legend.position = c(.05, .90),
+    legend.direction = "vertical",
+    legend.box = "horizontal",
+   legend.justification = c(.01, 0.5),
+   legend.box.just = "left",
+   #legend.margin = margin(4, 4, 4, 4),
+  legend.margin =margin(r=40,l=5,t=5,b=5),
+    legend.spacing.y = unit(0.15, "cm"),
+      legend.text = element_text(size = 8.5, family = "Times New Roman"),
+  legend.title=element_blank(),
+   legend.key.size = unit(0.9, "cm"),
+   legend.key.height = unit(0.4, "cm"))
+
+P3
+```
+
+Figure T2: Effect of stressor on predation rates by general taxonomic group
+```{r}
+png("Figures/Fig3_stressor_GenTaxGroup.png", width=15, height=12, units="cm", res=300)
+print(P3)
+dev.off()
+```
+
+## Effect of experimental factors on temperature experiments  
+```{r}
+data_TempSig<-data %>%
+  filter(Treatment=="Warming") %>% # %>% 
+ filter(!Cons_Aclimatation=="NR")%>% #removing experiments don't report aclimatation
+ filter(!Exp_duration=="NR") #filtering experiments don't report days duration 
+
+
+
+# Lets model which element determine effect of warming on feeding rates
+model_t2<- rma.mv(yi,vi, mods =~Temp_variation+Exp_duration_days
++ExpTreatment+Cons_Aclimatation_days+Starvation, random=~1|Title,  method = "REML", knha=TRUE, data = data_TempSig)
+
+summary(model_t2)
+
+model_t1<- rma.mv(yi,vi, mods =~Temp_variation, random=~1|Title,  method = "REML", knha=TRUE, data = data_TempSig)
+
+summary(model_t1)
+
+#now lets plot a correlation temperature and effect
+ggplot(data=data_TempSig, aes(x=Temp_variation, y=yi))+
+  geom_point(shape=21)+
+  geom_smooth(method=lm, formula=y~x)+
+  theme_bw()+
+  ylab("Effect size (logRR)")+xlab("Temperature increase (C)")+
+  #scale_shape_manual(values=c(16, 21, 8))+
+scale_y_continuous(breaks = seq(-1,2, 1),limits = c(-1.5, 2.5))+
+scale_x_continuous(breaks = seq(1,15,2),limits = c(0, 15.5))+
+    stat_regline_equation(label.x=2, label.y=2) +
+        stat_cor(aes(label=..rr.label..), label.x=2, label.y=2)
+```
+The increase in temperature seems to have a direct effect on the normalize effect size. It is the only experimental factor that had an effect 
+
+
+Creating excel file with model's results
+```{r}
+comp<-coef(summary(model_t2)) #get coeficients from model
+
+comp<-setNames(cbind(rownames(comp), comp, row.names = NULL), 
+         c("Variable", "estimate", "se", "zval", "pval", "ci.lb", "ci.ub")) # set colnames
+
+new_variables_comp_2<-as.data.frame(comp) #make dataframe
+```
+
+Creating workbook with data from model explaining experimental variables affecing warming experiments
+```{r}
+write.xlsx(new_variables_comp_2, file = "Models.xlsx",
+    sheetName = "Model_ExpVar_Warming", append = TRUE)
+```
+
+## Effect of methodological factors the effect acidification on feeding rates  
+```{r}
+
+data_a<-data %>%
+  filter(Treatment=="Acidification")
+
+model_a_only<- rma.mv(yi,vi, mods =~pH_var, random=~1|Title,  method = "REML", knha=TRUE, data = data_a)
+summary(model_a_only)
+
+data_AcidSig<-data %>%
+  filter(Treatment=="Acidification")%>%
+  #filter(Significance=="Significant")%>%
+  filter(Acidif_Measure=="pH")%>% #lets use pH as most studies use pH compare to pCO2
+  filter(!Cons_Aclimatation=="NR")%>%
+  filter(!Exp_duration=="NR") #filtering experiments don't report days duration 
+
+
+#Lets model effect of experimetnal variables 
+model_a1<- rma.mv(yi,vi, mods =~pH_var+Exp_duration_days
++ExpTreatment+Exp_duration_days +ExpTreatment+Cons_Aclimatation_days +Starvation, random=~1|Title,  method = "REML", knha=TRUE, data = data_AcidSig)
+
+summary(model_a1)
+
+#Trying to plot ph variation vs effect
+ggplot(data=data_AcidSig, aes(x=pH_var, y=yi))+geom_point()+geom_smooth(method=lm, formula = y~x)+theme_bw()+
+ ylab("Effect size (logRR)")+
+xlab("Temperature increase (C)")+
+scale_y_continuous(breaks = seq(-3, 2, 1),limits = c(-3.8, 1.5))+
+scale_x_continuous(breaks = seq(0 ,1, 0.25),limits = c(0.1, 0.9))
+```
+
+Creating excel file with model's results
+```{r}
+comp<-coef(summary(model_a1)) #get coeficients from model
+
+comp<-setNames(cbind(rownames(comp), comp, row.names = NULL), 
+         c("Variable", "estimate", "se", "zval", "pval", "ci.lb", "ci.ub")) # set colnames
+
+new_variables_comp_2<-as.data.frame(comp) #make dataframe
+```
+
+Creating workbook with data from model explaining experimental variables affecing acidification experiments
+```{r}
+write.xlsx(new_variables_comp_2, file = "Models.xlsx",
+    sheetName = "Model_ExpVar_Acidification", append = TRUE)
+```
+
+## Effect of methodological factors the effect acidification+ warming on feeding rates  
+```{r}
+data_Temp_Acidif<-data %>%
+  filter(Treatment=="Warming+Acidification")
+
+model_acid_warming<- rma.mv(yi,vi, mods =~pH_var+Temp_variation +Exp_duration_days+ExpTreatment+Exp_duration_days +ExpTreatment+Cons_Aclimatation_days+Starvation, random=~1|Title,  method = "REML", knha=TRUE, data = data_Temp_Acidif)
+
+summary(model_acid_warming)
+```
+
+Creating excel file with model's results
+```{r}
+comp<-coef(summary(model_acid_warming)) #get coeficients from model
+
+comp<-setNames(cbind(rownames(comp), comp, row.names = NULL), 
+         c("Variable", "estimate", "se", "zval", "pval", "ci.lb", "ci.ub")) # set colnames
+
+new_variables_comp_2<-as.data.frame(comp) #make dataframe
+```
+
+Writing the data into excel spreedsheet
+```{r}
+write.xlsx(new_variables_comp_2, file = "Models.xlsx",
+    sheetName = "Model_acidf_warm", append = TRUE)
+```
+
+
+## Map with location of studies 
+
+```{r}
+world <- ne_countries(scale = "medium", returnclass = "sf")
+```
+
+```{r}
+
+studies<-data %>%
+  select(Title, Treatment, Longitude, Latitude)%>%
+  group_by(Treatment, Longitude, Latitude)%>%
+  distinct(Title)
+
+str(studies)
+
+MapStudies<-
+  ggplot(data = world)+ 
+  geom_sf(color=NA)+
+  #let's limit the map area
+  coord_sf(xlim = c(-160, 160), ylim = c(-50, 65), expand = FALSE)+
+theme_bw()+ 
+  theme(axis.title.x=element_blank(),axis.title.y=element_blank(), panel.grid.major = element_line(colour = "white"))+
+   geom_point(data=studies, aes(x=Longitude, y=Latitude, colour=Treatment), alpha = 0.5, size=1.6, position = position_jitter(w=1, h=1))+
+  scale_colour_manual(values=colour.palette)+
+  theme(legend.position = c(.01, .10),
+    legend.direction = "vertical",
+    legend.justification = c("left", "bottom"),
+    legend.box.just = "left",
+    legend.margin = margin(1, 1, 1, 1),
+    legend.spacing.y = unit(0.05, "cm"),
+      legend.text = element_text(size = 9.5, family = "Arial"),
+  legend.title=element_text(size=9.2, family = "Arial"),
+   legend.key.size = unit(0.4, "cm"),
+      legend.key.height = unit(0.4, "cm"))+
+  guides(fill = guide_legend(override.aes = list(shape = 21)))
+
+MapStudies
+```
+
+Figure 1: Map with location of studies 
+```{r}
+png("Figures/Fig1_Map.png", width=18, height=12, units="cm", res=300)
+print(MapStudies)
+dev.off()
+```
+
+
